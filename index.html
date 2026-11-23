@@ -26,17 +26,19 @@
                                     lo bloquea, sigue en silencio
 
   Ejemplos:
-    http://SERVIDOR/tv/?canal=24h
-    http://SERVIDOR/tv/?canal=mega&sonido=1
-    http://SERVIDOR/tv/?canal=t13&v=h5efji0_wtQ
+    https://roblackgenesys.github.io/tv/?canal=24h
+    https://roblackgenesys.github.io/tv/?canal=mega&sonido=1
+    https://roblackgenesys.github.io/tv/?canal=t13
+
+  Cada canal usa el ID de su en vivo 24/7 ("video"). Si ese ID deja de
+  funcionar, la página prueba sola con el en vivo del canal ("channel").
+  Para actualizar un ID: editar este archivo en GitHub (lápiz) y guardar.
 */
 var CANALES = {
-  '24h':  { nombre: '24 Horas (TVN)',             channel: 'UCTXNz3gjAypWp3EhlIATEJQ' },
-  'mega': { nombre: 'Meganoticias Ahora (Mega)',  channel: 'UCkccyEbqhhM3uKOI6Shm-4Q' },
-  'chv':  { nombre: 'CHV Noticias (Chilevision)', channel: 'UCFXNWE_J-7Y8t0rCTnWxkDw' },
-  // T13 transmite dos en vivo a la vez, por eso va con ID de video.
-  // Si algún día deja de cargar, actualizar este ID o pasar ?v= en la URL.
-  't13':  { nombre: 'T13 En Vivo (Canal 13)',     video: 'h5efji0_wtQ' }
+  '24h':  { nombre: '24 Horas (TVN)',                  video: 'TrqtbBJQ_yU', channel: 'UCTXNz3gjAypWp3EhlIATEJQ' },
+  'mega': { nombre: 'Meganoticias Ahora (Mega)',       channel: 'UCkccyEbqhhM3uKOI6Shm-4Q' },
+  'chv':  { nombre: 'CHV Noticias 24/7 (Chilevision)', video: '6hhr6uVK9H4' },
+  't13':  { nombre: 'T13 En Vivo (Canal 13)',          video: 'h5efji0_wtQ', channel: 'UCsRnhjcUCR78Q3Ud6OXCTNg' }
 };
 
 var RECARGA_COMPLETA_MS = 6 * 60 * 60 * 1000; // recarga preventiva cada 6 h
@@ -46,7 +48,8 @@ var FALLAS_MAX = 6;                           // 6 x 30 s = 3 min sin video -> r
 var params = new URLSearchParams(location.search);
 var clave = (params.get('canal') || '24h').toLowerCase();
 var canal = CANALES[clave] || CANALES['24h'];
-var video = params.get('v') || canal.video || '';
+var usarCanal = params.get('alt') === '1' && !!canal.channel;
+var video = usarCanal ? '' : (params.get('v') || canal.video || '');
 var conSonido = params.get('sonido') === '1';
 
 var player = null;
@@ -62,6 +65,17 @@ function mensaje(texto) {
 function recargar(motivo, demoraMs) {
   mensaje(motivo + ' — reintentando...');
   setTimeout(function () { location.reload(); }, demoraMs || 0);
+}
+
+// Recarga con o sin el modo alternativo (en vivo del canal en vez del ID)
+function irA(alt, motivo, demoraMs) {
+  var p = new URLSearchParams(location.search);
+  if (alt) { p.set('alt', '1'); } else { p.delete('alt'); }
+  var q = p.toString();
+  mensaje(motivo + ' — reintentando...');
+  setTimeout(function () {
+    location.replace(location.pathname + (q ? '?' + q : ''));
+  }, demoraMs || 0);
 }
 
 // Arma el iframe de YouTube
@@ -106,7 +120,15 @@ window.onYouTubeIframeAPIReady = function () {
         }
       },
       onError: function () {
-        recargar('Señal no disponible', 30000);
+        if (video && canal.channel && !params.get('v')) {
+          // El ID guardado ya no sirve: probar con el en vivo del canal
+          irA(true, 'Cambiando de señal', 5000);
+        } else if (usarCanal) {
+          // Tampoco resultó por canal: volver al ID en 1 minuto
+          irA(false, 'Señal no disponible', 60000);
+        } else {
+          recargar('Señal no disponible', 30000);
+        }
       }
     }
   });
@@ -139,8 +161,9 @@ setInterval(function () {
   }
 }, REVISION_MS);
 
-// Recarga preventiva (los en vivo de YouTube se reinician cada tanto)
-setTimeout(function () { location.reload(); }, RECARGA_COMPLETA_MS);
+// Recarga preventiva (los en vivo de YouTube se reinician cada tanto).
+// Si estaba en modo alternativo, vuelve a intentar con el ID principal.
+setTimeout(function () { irA(false, 'Actualizando', 0); }, RECARGA_COMPLETA_MS);
 </script>
 </body>
 </html>
