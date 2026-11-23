@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>TV en vivo</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; cursor: none; }
+  #yt { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
+  #msg { position: absolute; left: 32px; bottom: 28px; color: #9a9a9a; font: 18px Arial, sans-serif; display: none; }
+</style>
+</head>
+<body>
+<div id="msg"></div>
+<script>
+/*
+  TV en vivo para pantallas LG webOS Signage ("Reproducir vía URL").
+  Hay que servir este archivo por http/https (no file://): YouTube exige que el
+  reproductor venga embebido en un sitio, si no muestra "Error 153".
+
+  Parámetros (en la URL):
+    ?canal=24h | mega | t13 | chv   canal a mostrar (por defecto 24h)
+    ?v=ID_DEL_VIDEO                 fuerza un en vivo específico de YouTube
+    ?sonido=1                       intenta reproducir con audio; si la pantalla
+                                    lo bloquea, sigue en silencio
+
+  Ejemplos:
+    http://SERVIDOR/tv/?canal=24h
+    http://SERVIDOR/tv/?canal=mega&sonido=1
+    http://SERVIDOR/tv/?canal=t13&v=h5efji0_wtQ
+*/
+var CANALES = {
+  '24h':  { nombre: '24 Horas (TVN)',             channel: 'UCTXNz3gjAypWp3EhlIATEJQ' },
+  'mega': { nombre: 'Meganoticias Ahora (Mega)',  channel: 'UCkccyEbqhhM3uKOI6Shm-4Q' },
+  'chv':  { nombre: 'CHV Noticias (Chilevision)', channel: 'UCFXNWE_J-7Y8t0rCTnWxkDw' },
+  // T13 transmite dos en vivo a la vez, por eso va con ID de video.
+  // Si algún día deja de cargar, actualizar este ID o pasar ?v= en la URL.
+  't13':  { nombre: 'T13 En Vivo (Canal 13)',     video: 'h5efji0_wtQ' }
+};
+
+var RECARGA_COMPLETA_MS = 6 * 60 * 60 * 1000; // recarga preventiva cada 6 h
+var REVISION_MS = 30 * 1000;                  // watchdog cada 30 s
+var FALLAS_MAX = 6;                           // 6 x 30 s = 3 min sin video -> recarga
+
+var params = new URLSearchParams(location.search);
+var clave = (params.get('canal') || '24h').toLowerCase();
+var canal = CANALES[clave] || CANALES['24h'];
+var video = params.get('v') || canal.video || '';
+var conSonido = params.get('sonido') === '1';
+
+var player = null;
+var listo = false;
+var fallas = 0;
+
+function mensaje(texto) {
+  var m = document.getElementById('msg');
+  m.textContent = texto;
+  m.style.display = texto ? 'block' : 'none';
+}
+
+function recargar(motivo, demoraMs) {
+  mensaje(motivo + ' — reintentando...');
+  setTimeout(function () { location.reload(); }, demoraMs || 0);
+}
+
+// Arma el iframe de YouTube
+var qs = 'autoplay=1' +
+  '&mute=' + (conSonido ? '0' : '1') +
+  '&controls=0&rel=0&playsinline=1&iv_load_policy=3&modestbranding=1' +
+  '&enablejsapi=1&origin=' + encodeURIComponent(location.origin);
+
+var src = video
+  ? 'https://www.youtube.com/embed/' + encodeURIComponent(video) + '?' + qs
+  : 'https://www.youtube.com/embed/live_stream?channel=' + canal.channel + '&' + qs;
+
+var iframe = document.createElement('iframe');
+iframe.id = 'yt';
+iframe.src = src;
+iframe.setAttribute('allow', 'autoplay; encrypted-media; fullscreen');
+iframe.setAttribute('allowfullscreen', '');
+iframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+document.body.appendChild(iframe);
+
+// API de YouTube para controlar audio y detectar caídas
+window.onYouTubeIframeAPIReady = function () {
+  player = new YT.Player('yt', {
+    events: {
+      onReady: function () {
+        listo = true;
+        mensaje('');
+        if (conSonido) {
+          player.unMute();
+          player.setVolume(100);
+          player.playVideo();
+          // Si el navegador bloquea el autoplay con audio, se pasa a silencio
+          setTimeout(function () {
+            if (player.getPlayerState() !== 1) {
+              player.mute();
+              player.playVideo();
+            }
+          }, 5000);
+        } else {
+          player.mute();
+          player.playVideo();
+        }
+      },
+      onError: function () {
+        recargar('Señal no disponible', 30000);
+      }
+    }
+  });
+};
+
+var api = document.createElement('script');
+api.src = 'https://www.youtube.com/iframe_api';
+api.onerror = function () { recargar('Sin conexión a YouTube', 60000); };
+document.head.appendChild(api);
+
+// Watchdog: si el video no está reproduciendo ni cargando por 3 min, recarga
+setInterval(function () {
+  if (!listo) {
+    fallas++;
+  } else {
+    var estado = -1;
+    try { estado = player.getPlayerState(); } catch (e) {}
+    if (estado === 1 || estado === 3) {
+      fallas = 0;
+      mensaje('');
+    } else {
+      fallas++;
+      if (estado === 2 || estado === 5 || estado === -1) {
+        try { player.playVideo(); } catch (e) {}
+      }
+    }
+  }
+  if (fallas >= FALLAS_MAX) {
+    recargar('Sin video', 0);
+  }
+}, REVISION_MS);
+
+// Recarga preventiva (los en vivo de YouTube se reinician cada tanto)
+setTimeout(function () { location.reload(); }, RECARGA_COMPLETA_MS);
+</script>
+</body>
+</html>
