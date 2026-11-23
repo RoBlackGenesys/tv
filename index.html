@@ -8,7 +8,7 @@
 <style>
   html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; cursor: none; }
   #yt { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
-  #msg { position: absolute; left: 32px; bottom: 28px; color: #9a9a9a; font: 18px Arial, sans-serif; display: none; }
+  #msg { position: absolute; z-index: 2; left: 32px; bottom: 28px; padding: 6px 10px; background: rgba(0,0,0,.6); color: #bbb; font: 18px Arial, sans-serif; display: none; }
 </style>
 </head>
 <body>
@@ -33,6 +33,9 @@
   Cada canal usa el ID de su en vivo 24/7 ("video"). Si ese ID deja de
   funcionar, la página prueba sola con el en vivo del canal ("channel").
   Para actualizar un ID: editar este archivo en GitHub (lápiz) y guardar.
+
+  Ojo: la señal 24/7 de 24 Horas en YouTube va ~40 min atrasada.
+  Mega, CHV Noticias y T13 van en tiempo real.
 */
 var CANALES = {
   '24h':  { nombre: '24 Horas (TVN)',                  video: 'TrqtbBJQ_yU', channel: 'UCTXNz3gjAypWp3EhlIATEJQ' },
@@ -55,6 +58,7 @@ var conSonido = params.get('sonido') === '1';
 var player = null;
 var listo = false;
 var fallas = 0;
+var audioBloqueado = false;
 
 function mensaje(texto) {
   var m = document.getElementById('msg');
@@ -76,6 +80,15 @@ function irA(alt, motivo, demoraMs) {
   setTimeout(function () {
     location.replace(location.pathname + (q ? '?' + q : ''));
   }, demoraMs || 0);
+}
+
+// Si la pantalla no deja partir con audio, sigue en silencio y lo avisa 10 min
+function silenciarPorBloqueo() {
+  if (!conSonido || audioBloqueado || !player) { return; }
+  audioBloqueado = true;
+  try { player.mute(); player.playVideo(); } catch (e) {}
+  mensaje('Sin audio: la pantalla bloqueó el sonido automático');
+  setTimeout(function () { mensaje(''); }, 10 * 60 * 1000);
 }
 
 // Arma el iframe de YouTube
@@ -106,18 +119,21 @@ window.onYouTubeIframeAPIReady = function () {
         if (conSonido) {
           player.unMute();
           player.setVolume(100);
-          player.playVideo();
-          // Si el navegador bloquea el autoplay con audio, se pasa a silencio
-          setTimeout(function () {
-            if (player.getPlayerState() !== 1) {
-              player.mute();
-              player.playVideo();
-            }
-          }, 5000);
         } else {
           player.mute();
-          player.playVideo();
         }
+        player.playVideo();
+        // Respaldo: si a los 15 s quedó pausado o en espera (no por un aviso
+        // de YouTube, que no detiene el reproductor), el audio fue bloqueado
+        if (conSonido) {
+          setTimeout(function () {
+            var e = player.getPlayerState();
+            if (e === 2 || e === 5) { silenciarPorBloqueo(); }
+          }, 15000);
+        }
+      },
+      onAutoplayBlocked: function () {
+        silenciarPorBloqueo();
       },
       onError: function () {
         if (video && canal.channel && !params.get('v')) {
@@ -148,7 +164,7 @@ setInterval(function () {
     try { estado = player.getPlayerState(); } catch (e) {}
     if (estado === 1 || estado === 3) {
       fallas = 0;
-      mensaje('');
+      if (!audioBloqueado) { mensaje(''); }
     } else {
       fallas++;
       if (estado === 2 || estado === 5 || estado === -1) {
